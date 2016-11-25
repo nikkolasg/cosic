@@ -58,6 +58,7 @@ int main(int argc, char *argv[]) {
         pfail("could not read properly private key.",NULL);
     }
 
+    // XXX Change to print public key of course ;)
     print_hexa("[+] private key: ",private,ED25519_PRIVATE_SIZE);
 
 }

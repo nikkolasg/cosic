@@ -25,7 +25,30 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <linux/random.h>
+#include <sys/syscall.h>
+
 #include "utils.h"
+
+
+/* 
+ * ===  FUNCTION  ======================================================================
+ *         Name:  random_bytes
+ *  Description:  calls getrandom syscall on linux filling *buf* with *len* bytes. It 
+ *                returns false if error or if returned number is not equal to *len*.
+ * =====================================================================================
+ */
+bool random_bytes(void *buf, size_t len)
+{
+   int n;
+   n = syscall(SYS_getrandom,buf,len,0);
+   if (n == -1) {
+       return false;
+   } else if (n < len) {
+       return false;
+   }
+   return true;
+}
 
 /* 
  * ===  FUNCTION  ======================================================================
