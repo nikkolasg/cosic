@@ -25,7 +25,7 @@
  *  Description:  Check if the given string represents a valid ipv4 address.
  * =====================================================================================
  */
-int net_is_ip_valid(char * ip)
+bool net_is_ip_valid(char * ip)
 {
     struct sockaddr_in sa;
     int result = inet_pton(AF_INET, ip, &(sa.sin_addr));

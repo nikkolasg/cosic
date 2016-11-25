@@ -15,6 +15,6 @@
  *
  * =====================================================================================
  */
+#include <stdbool.h>
 
-
-int net_is_ip_valid(char * ip);
+bool net_is_ip_valid(char * ip);

@@ -15,6 +15,7 @@
  */
 
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 
 #include "utils.h"
@@ -47,9 +48,17 @@ int main(int argc, char *argv[]) {
     if (!net_is_ip_valid(ip)) {
         pfail("ipv4 address \"%s\" not valid.",ip);
     } 
-    pout("binding to %s",ip);
 
     // read private key
-    
+    #define ED25519_PRIVATE_SIZE 32
+    uint8_t *private[ED25519_PRIVATE_SIZE];
+    char *filename = argv[2];
+    if (!read_file(filename, private, ED25519_PRIVATE_SIZE)) {
+        pfail("could not read properly private key.",NULL);
+    }
+
+    printf("[+] private key: ");
+    print_hexa(private,ED25519_PRIVATE_SIZE);
+    printf("\n");
 
 }
