@@ -1,0 +1,76 @@
+
+message Announcement {
+}
+
+message Challenge {
+  required bytes chall = 1;
+}
+
+message Commitment {
+  required bytes comm = 1;
+}
+
+message OverlayMessage {
+  optional TreeNodeInfo tree_node_info = 1;
+  optional RequestTree request_tree = 2;
+  optional TreeMarshal tree_marshal = 3;
+  optional RequestRoster request_roster = 4;
+  optional Roster roster = 5;
+}
+
+message ProtocolPacket {
+  required uint32 phase = 1;
+  optional OverlayMessage info = 2;
+  optional Announcement ann = 3;
+  optional Commitment comm = 4;
+  optional Challenge chal = 5;
+  optional Response resp = 6;
+}
+
+message RequestRoster {
+  required bytes roster_id = 1;
+}
+
+message RequestTree {
+  required bytes tree_id = 1;
+}
+
+message Response {
+  required bytes resp = 1;
+}
+
+message Roster {
+  required bytes id = 1;
+  repeated ServerIdentity list = 2;
+  required bytes aggregate = 3;
+}
+
+message ServerIdentity {
+  required bytes public = 1;
+  required bytes id = 2;
+  required string address = 3;
+}
+
+message Token {
+  required bytes roster_id = 1;
+  required bytes tree_id = 2;
+  required bytes proto_id = 3;
+  required bytes service_id = 4;
+  required bytes round_id = 5;
+  required bytes tree_node_id = 6;
+  required bytes cacheid = 7;
+}
+
+message TreeMarshal {
+  required bytes tree_node_id = 1;
+  required bytes tree_id = 2;
+  required bytes server_identity_id = 3;
+  required bytes roster_id = 4;
+  repeated TreeMarshal children = 5;
+}
+
+message TreeNodeInfo {
+  optional Token to = 1;
+  optional Token from = 2;
+}
+
