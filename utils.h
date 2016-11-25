@@ -16,6 +16,8 @@
  * =====================================================================================
  */
 
+#pragma once
+
 #include <stdbool.h>
 
 /*
@@ -33,4 +35,4 @@
  * Utility functions
  */
 bool read_file(const char *filename,void * buffer,size_t length);
-void print_hexa(void *buffer, size_t len);
+void print_hexa(const char *prepend, const void *buffer, size_t len);

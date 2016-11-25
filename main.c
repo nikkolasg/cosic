@@ -50,15 +50,14 @@ int main(int argc, char *argv[]) {
     } 
 
     // read private key
+    // XXX move that into ed25519 file
     #define ED25519_PRIVATE_SIZE 32
-    uint8_t *private[ED25519_PRIVATE_SIZE];
+    uint8_t *private[ED25519_PRIVATE_SIZE] = {0};
     char *filename = argv[2];
     if (!read_file(filename, private, ED25519_PRIVATE_SIZE)) {
         pfail("could not read properly private key.",NULL);
     }
 
-    printf("[+] private key: ");
-    print_hexa(private,ED25519_PRIVATE_SIZE);
-    printf("\n");
+    print_hexa("[+] private key: ",private,ED25519_PRIVATE_SIZE);
 
 }

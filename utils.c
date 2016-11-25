@@ -74,14 +74,16 @@ bool read_file(const char *filename, void * buffer, size_t len)
 /* 
  * ===  FUNCTION  ======================================================================
  *         Name:  print_hexa
- *  Description:  Prints *len* bytes pointed by the given *buffer* in
- *  hexadecimal format.
+ *  Description:  Prints *prepend*, then *len* bytes pointed by the given *buffer* in
+ *  hexadecimal format, followed by "\n".
  * =====================================================================================
  */
-void print_hexa(void *buffer, size_t len)
+void print_hexa(const char *prepend,const void *buffer, size_t len)
 {
-    uint8_t *buff = buffer;
+    const uint8_t *buff = buffer;
+    printf("%s",prepend);
     for(size_t i=0; i < len; i++) {
         printf("%02x",buff[i]);
     }
+    printf("\n");
 }
