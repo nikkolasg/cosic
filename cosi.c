@@ -144,3 +144,12 @@ void cosi_state_free(cosi_state *state) {
     state->random = NULL;
     state->response = NULL;
 }
+
+extern inline bool cosi_state_check(cosi_state * state){ 
+    if (state == NULL 
+            || state->secret == NULL 
+            || state->remote == NULL) {
+        return false;
+    }
+    return true;
+}

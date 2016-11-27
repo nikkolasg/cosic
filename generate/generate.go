@@ -12,7 +12,7 @@ func main() {
 	fmt.Println("generate.go - generate ed25519 private key and write into file")
 	fmt.Println("WARNING: Do NOT USE this private key for anything else than playing " +
 		"with cosic. It's a reduced private key and it only contains the private part " +
-		"and not the public, as opposed to the REF10 implementation")
+		"and not the public")
 
 	if len(os.Args) != 2 {
 		errExit("Usage: go run generate.go <private key file>")
