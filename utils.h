@@ -19,6 +19,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 
 /*
  * Utility macro definitions
@@ -34,5 +35,6 @@
 /*
  * Utility functions
  */
+bool random_bytes(void *buf, size_t len);
 bool read_file(const char *filename,void * buffer,size_t length);
 void print_hexa(const char *prepend, const void *buffer, size_t len);

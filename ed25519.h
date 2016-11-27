@@ -2,6 +2,11 @@
 
 typedef int32_t fe[10];
 
+#define ED25519_PRIVATE_SIZE 32
+#define ED25519_PUBLIC_SIZE 32
+#define ED25519_SCALAR_SIZE 32
+#define ED25519_POINT_SIZE 32
+
 typedef struct {
     fe X;
     fe Y;
