@@ -17,7 +17,6 @@ bool cosi_state_check(cosi_state * state) {
     if (state == NULL 
             || state->secret == NULL 
             || state->remote == NULL) {
-
         return false;
     }
     return true;

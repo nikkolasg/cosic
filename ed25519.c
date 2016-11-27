@@ -148,13 +148,6 @@ void fe_cmov(fe f,const fe g,unsigned int b)
     f[8] = f8 ^ x8;
     f[9] = f9 ^ x9;
 }
-static void cmov(ge_precomp *t,const ge_precomp *u,unsigned char b)
-{
-    fe_cmov(t->yplusx,u->yplusx,b);
-    fe_cmov(t->yminusx,u->yminusx,b);
-    fe_cmov(t->xy2d,u->xy2d,b);
-}
-
 /*
  h = 0
  */
@@ -1055,6 +1048,54 @@ void ge_p3_tobytes(unsigned char *s,const ge_p3 *h)
     s[31] ^= fe_isnegative(x) << 7;
 }
 
+unsigned char equal(signed char b,signed char c)
+{
+    unsigned char ub = b;
+    unsigned char uc = c;
+    unsigned char x = ub ^ uc; /* 0: yes; 1..255: no */
+    uint32_t y = x; /* 0: yes; 1..255: no */
+    y -= 1; /* 4294967295: yes; 0..254: no */
+    y >>= 31; /* 1: yes; 0: no */
+
+    return y;
+}
+
+unsigned char negative(signed char b)
+{
+    uint64_t x = b; /* 18446744073709551361..18446744073709551615: yes; 0..255: no */
+    x >>= 63; /* 1: yes; 0: no */
+
+    return x;
+}
+
+void cmov(ge_precomp *t,const ge_precomp *u,unsigned char b)
+{
+    fe_cmov(t->yplusx,u->yplusx,b);
+    fe_cmov(t->yminusx,u->yminusx,b);
+    fe_cmov(t->xy2d,u->xy2d,b);
+}
+void ge_select(ge_precomp *t,int pos,signed char b)
+{
+    ge_precomp minust;
+    unsigned char bnegative = negative(b);
+    unsigned char babs = b - (((-bnegative) & b) * ((signed char) 1 << 1));
+
+    ge_precomp_0(t);
+    cmov(t,&base[pos][0],equal(babs,1));
+    cmov(t,&base[pos][1],equal(babs,2));
+    cmov(t,&base[pos][2],equal(babs,3));
+    cmov(t,&base[pos][3],equal(babs,4));
+    cmov(t,&base[pos][4],equal(babs,5));
+    cmov(t,&base[pos][5],equal(babs,6));
+    cmov(t,&base[pos][6],equal(babs,7));
+    cmov(t,&base[pos][7],equal(babs,8));
+    fe_copy(minust.yplusx,t->yminusx);
+    fe_copy(minust.yminusx,t->yplusx);
+    fe_neg(minust.xy2d,t->xy2d);
+    cmov(t,&minust,bnegative);
+}
+
+
 void ge_scalarmult_base(ge_p3 *h,const unsigned char *a)
 {
     signed char e[64];
@@ -1160,39 +1201,13 @@ void ge_madd(ge_p1p1 *r,const ge_p3 *p,const ge_precomp *q)
     fe_sub(r->T, t0, r->T);
 }
 
-static unsigned char negative(signed char b)
-{
-    uint64_t x = b; /* 18446744073709551361..18446744073709551615: yes; 0..255: no */
-    x >>= 63; /* 1: yes; 0: no */
 
-    return x;
-}
 
 void ge_precomp_0(ge_precomp *h)
 {
     fe_1(h->yplusx);
     fe_1(h->yminusx);
     fe_0(h->xy2d);
-}
-static void ge_select(ge_precomp *t,int pos,signed char b)
-{
-    ge_precomp minust;
-    unsigned char bnegative = negative(b);
-    unsigned char babs = b - (((-bnegative) & b) * ((signed char) 1 << 1));
-
-    ge_precomp_0(t);
-    cmov(t,&base[pos][0],equal(babs,1));
-    cmov(t,&base[pos][1],equal(babs,2));
-    cmov(t,&base[pos][2],equal(babs,3));
-    cmov(t,&base[pos][3],equal(babs,4));
-    cmov(t,&base[pos][4],equal(babs,5));
-    cmov(t,&base[pos][5],equal(babs,6));
-    cmov(t,&base[pos][6],equal(babs,7));
-    cmov(t,&base[pos][7],equal(babs,8));
-    fe_copy(minust.yplusx,t->yminusx);
-    fe_copy(minust.yminusx,t->yplusx);
-    fe_neg(minust.xy2d,t->xy2d);
-    cmov(t,&minust,bnegative);
 }
 void ge_p3_0(ge_p3 *h)
 {
@@ -1774,14 +1789,4 @@ void sc_muladd(unsigned char *s,const unsigned char *a,const unsigned char *b,co
     s[31] = s11 >> 17;
 }
 
-static unsigned char equal(signed char b,signed char c)
-{
-    unsigned char ub = b;
-    unsigned char uc = c;
-    unsigned char x = ub ^ uc; /* 0: yes; 1..255: no */
-    uint32_t y = x; /* 0: yes; 1..255: no */
-    y -= 1; /* 4294967295: yes; 0..254: no */
-    y >>= 31; /* 1: yes; 0: no */
 
-    return y;
-}
