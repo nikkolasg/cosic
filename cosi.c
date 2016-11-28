@@ -3,10 +3,151 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 
 #include "cosi.h"
+#include "cosi.pb-c.h"
 #include "utils.h"
 #include "ed25519.h"
+#include "cosi.pb-c.h"
+
+const uint32_t cosi_phase_ann   = 1;
+const uint32_t cosi_phase_comm  = 2;
+const uint32_t cosi_phase_chall = 3;
+const uint32_t cosi_phase_resp  = 4;
+
+
+void cosi_proto_init(cosi_proto * proto,const char *remote,const material *material) {
+    if(!proto) {
+        pfail("cosi proto init given null pointer",NULL);
+    }
+
+    cosi_state *state;
+    if (!util_malloc((void*)&state,sizeof(cosi_state))) {
+        pfail("%s: can not allocate cosi_state",remote);
+    }
+    cosi_state_init(state,remote,material->pk);
+
+    proto->state = state;
+    proto->remote = remote;
+    proto->material = material;
+}
+
+void cosi_proto_process(cosi_proto *proto,struct bufferevent *bev,uint8_t id[UUID_SIZE],uint8_t *buffer,size_t len) {
+    afail(proto->remote,"cosi proto null proto remote");
+
+    // check if the id is a cosi packet
+    if (memcmp(id,cosi_packet_id,UUID_SIZE) != 0) {
+        perr("%s: cosi proto process: non cosi packet id received",proto->remote);
+        return;
+    }
+
+    // unmarshal packet
+    ProtocolPacket *packet;
+    if ((packet = protocol_packet__unpack(NULL,len,buffer)) == NULL) {
+        perr("%s: cosi proto could not unpack protocol packet",proto->remote);
+        return;
+    }
+
+    switch (packet->phase) {
+        case cosi_phase_ann:
+            cosi_proto_announcement(proto,bev,packet);
+        case cosi_phase_chall:
+            cosi_proto_challenge(proto,bev,packet);
+        // theses cases should not happen in this simplistic cosi version yet
+        // since we are a leaf node.
+        //case cosi_phase_comm:
+        //    cosi_proto_commitment(proto,bev,packet);
+        //case cosi_phase_resp:
+        //    cosi_proto_response(proto,bev,packet);
+    }
+
+    protocol_packet__free_unpacked(packet,NULL);
+}
+
+void cosi_proto_announcement(cosi_proto *proto,struct bufferevent *bev,ProtocolPacket *packet) {
+    if(packet->ann == NULL) {
+        perr("%s: cosi proto announcement given null announcement",proto->remote);                  
+        return;
+    }
+    assert(proto->state != NULL);
+
+    cosi_state *state = proto->state;
+    // generate commitment
+    if (!cosi_state_commit(state)) {
+        return;
+    }
+    
+    ProtocolPacket protoPacket = PROTOCOL_PACKET__INIT;
+    Commitment protoCommit = COMMITMENT__INIT;
+    ProtobufCBinaryData protobufComm = {ED25519_POINT_SIZE,state->commit};
+    protoCommit.comm = protobufComm;
+    protoPacket.comm = &protoCommit;
+
+    if (!cosi_proto_send_packet(bev,packet)) {
+        perr("%s: cosi proto announcement could not send back commitment",proto->remote);
+    } else {
+        pout("%s: cosi proto sent back announcement",proto->remote);
+    }
+}
+
+void cosi_proto_challenge(cosi_proto *proto, struct bufferevent *bev,ProtocolPacket *packet) {
+    assert(packet->chal == NULL);
+    assert(proto->state != NULL);
+
+    cosi_state *state = proto->state;
+    uint8_t *challenge = packet->chal->chall.data;
+
+    if(!cosi_state_challenge(state,challenge)) {
+        return;
+    }
+
+    if(!cosi_state_response(state)) {
+        return;
+    }
+
+    ProtocolPacket p = PROTOCOL_PACKET__INIT; 
+    Response response = RESPONSE__INIT;
+    ProtobufCBinaryData protobufResponse = {ED25519_SCALAR_SIZE,state->response};
+    response.resp = protobufResponse;
+    p.resp = &response;
+   
+    if (!cosi_proto_send_packet(bev,&p)) {
+        pout("%s: cosi proto challenge error sending packet",proto->remote);
+    } else {
+        pout("%s: cosi proto challenge sent back response",proto->remote);
+    }
+}
+
+bool cosi_proto_send_packet(struct bufferevent *bev,ProtocolPacket *packet) {
+    size_t len = protocol_packet__get_packed_size(packet);
+    uint8_t *buffer;
+    bool ret=false;
+    cosi_packet_exchange_endpoints(packet);
+
+    if((buffer = malloc(len)) == NULL) {
+        return false;
+    }
+
+    protocol_packet__pack(packet,buffer);
+     // write it down in the network
+    if (bufferevent_write(bev,(void *)buffer,len) == -1) {
+        ret = false;
+    }
+    free(buffer);
+    return ret;
+}
+
+void cosi_packet_exchange_endpoints(ProtocolPacket *packet) {
+    if (!packet->info || !packet->info->tree_node_info) {
+        pfail("protocol packet has no overlay message ??");
+    }
+    
+    TreeNodeInfo *tni = packet->info->tree_node_info;
+    Token *tmp = tni->to;
+    tni->to = tni->from;
+    tni->from = tmp;
+}
 
 /* 
  * ===  FUNCTION  ======================================================================
@@ -20,16 +161,13 @@
  *  the random bytes.
  * =====================================================================================
  */
-bool cosi_state_init(cosi_state *state,char *remote,uint8_t *secret) {
-    if (state == NULL) {
-        return false;
-    }
+void cosi_state_init(cosi_state *state,const char *remote,const uint8_t *secret) {
+    assert(state != NULL);
 
     state->secret = secret;
     state->remote = remote;
 
-    pout("New cosi initiated with %s",remote);
-    return true;
+    pout("new cosi initiated with %s",remote);
 }
 
 /* 
@@ -62,6 +200,7 @@ bool cosi_state_commit(cosi_state *state) {
         perr("%s cosi: state commit can't malloc the bytes",state->remote);
         return false;
     }
+    memset(state->commit,0,ED25519_POINT_SIZE);
 
     state->random = random;
 
@@ -85,7 +224,7 @@ bool cosi_state_commit(cosi_state *state) {
  *                returned true.
  * =====================================================================================
  */
-bool cosi_state_challenge(cosi_state *state,uint8_t *challenge) {
+bool cosi_state_challenge(cosi_state *state,const uint8_t *challenge) {
     if (!cosi_state_check(state)) {
         return false;
     }
@@ -93,7 +232,6 @@ bool cosi_state_challenge(cosi_state *state,uint8_t *challenge) {
         perr("%s cosi: state challenge can't malloc the bytes",state->remote);
         return false;
     }
-
     memcpy(state->challenge,challenge,ED25519_SCALAR_SIZE);
     return true;
 }
@@ -114,7 +252,8 @@ bool cosi_state_response(cosi_state *state) {
         perr("%s cosi: state response can't malloc the bytes",state->remote);
         return false;
     }
-
+    memset(state->response,0,ED25519_SCALAR_SIZE);
+    
     // r = challenge * secret + random
     sc_muladd(state->response, state->secret,state->challenge, state->random);
     sc_reduce(state->response);

@@ -31,7 +31,8 @@ void usage() {
            "protocol for the moment, merely for language compatibility testing."
            "USE AT YOUR OWN RISK.\n\n");
     printf("./cosic <address> <private file>\n"
-           " - address is the ipv4 address you want cosic to bind for incoming connections\n"
+           " - port is the port you want cosic to bind on for incoming connections. It"
+           "   binds on the \"0.0.0.0:port\" address.\n"
            " - private file is the path of the file which contains your private ed25519\n"
            "   key.\n");
 }
@@ -41,13 +42,13 @@ int main(int argc, char *argv[]) {
         usage();
         fail;
     }
+    int port;
 
     pout("%s",banner);
     
-    // validate ip address
-    char *ip = argv[1];
-    if (!net_is_ip_valid(ip)) {
-        pfail("ipv4 address \"%s\" not valid.",ip);
+    port = atoi(argv[1]);
+    if (port <= 0  || port > 65535) {
+        pfail("port given \"%d\" not valid.",port);
     } 
 
     // read private key
@@ -57,8 +58,13 @@ int main(int argc, char *argv[]) {
     if (!read_file(filename, private, ED25519_PRIVATE_SIZE)) {
         pfail("could not read properly private key.",NULL);
     }
+    material mat;
+    mat.pk = (uint8_t*)private;
+    mat.len = ED25519_PRIVATE_SIZE;
 
-    // XXX Change to print public key of course ;)
+    // XXX Change to print public key of course
     print_hexa("[+] private key: ",private,ED25519_PRIVATE_SIZE);
+
+    run(port,(void *)&mat);
 
 }

@@ -18,5 +18,17 @@
 #pragma once
 
 #include <stdbool.h>
+#include <event2/listener.h>
+#include "cosi.h"
 
+typedef struct {
+    char *remote;
+    material *material;
+    // TODO later, make a full dispatcher which handles different type of
+    // message...
+    cosi_proto *proto;
+} conn_state;
+
+void run(const int, void *data);
+void conn_state_init(conn_state *s, struct sockaddr *add,int len,void *gdata);
 bool net_is_ip_valid(char * ip);

@@ -18,6 +18,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <assert.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,6 +37,7 @@
  *         Name:  random_bytes
  *  Description:  calls getrandom syscall on linux filling *buf* with *len* bytes. It 
  *                returns false if error or if returned number is not equal to *len*.
+ *                XXX TODO make that platform independant...
  * =====================================================================================
  */
 bool random_bytes(void *buf, size_t len)
@@ -109,4 +111,14 @@ void print_hexa(const char *prepend,const void *buffer, size_t len)
         printf("%02x",buff[i]);
     }
     printf("\n");
+}
+
+bool util_malloc(void **ptr,size_t len) {
+    assert(ptr != NULL); 
+    
+    *ptr = malloc(len);
+    if (*ptr == NULL) {
+        return false;
+    }
+    return true;
 }
