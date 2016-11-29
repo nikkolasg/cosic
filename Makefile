@@ -1,5 +1,5 @@
 CC=clang
-CFLAGS=-Wall -levent -levent_core -lprotobuf-c
+CFLAGS=-Wall -levent -levent_core -lprotobuf-c 
 
 
 all: main.c net.c utils.c ed25519.c cosi.c uuid.c cosi.pb-c.c 

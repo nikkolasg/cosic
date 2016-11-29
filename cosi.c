@@ -1,4 +1,4 @@
-#include <stdint.h>
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,8 +8,10 @@
 #include "cosi.h"
 #include "cosi.pb-c.h"
 #include "utils.h"
+#include "uuid.h"
 #include "ed25519.h"
-#include "cosi.pb-c.h"
+
+#include <event2/buffer.h>
 
 const uint32_t cosi_phase_ann   = 1;
 const uint32_t cosi_phase_comm  = 2;
@@ -34,7 +36,7 @@ void cosi_proto_init(cosi_proto * proto,const char *remote,const material *mater
 }
 
 void cosi_proto_process(cosi_proto *proto,struct bufferevent *bev,uint8_t id[UUID_SIZE],uint8_t *buffer,size_t len) {
-    afail(proto->remote,"cosi proto null proto remote");
+    afail(proto->remote == NULL,"cosi proto null proto remote");
 
     // check if the id is a cosi packet
     if (memcmp(id,cosi_packet_id,UUID_SIZE) != 0) {
@@ -44,16 +46,19 @@ void cosi_proto_process(cosi_proto *proto,struct bufferevent *bev,uint8_t id[UUI
 
     // unmarshal packet
     ProtocolPacket *packet;
+    //print_hexa(" => ",buffer,len);
     if ((packet = protocol_packet__unpack(NULL,len,buffer)) == NULL) {
-        perr("%s: cosi proto could not unpack protocol packet",proto->remote);
+        perr("%s: cosi proto could not unpack protocol packet out of %zu bytes",proto->remote,len);
         return;
     }
 
     switch (packet->phase) {
         case cosi_phase_ann:
             cosi_proto_announcement(proto,bev,packet);
+            break;
         case cosi_phase_chall:
             cosi_proto_challenge(proto,bev,packet);
+            break;
         // theses cases should not happen in this simplistic cosi version yet
         // since we are a leaf node.
         //case cosi_phase_comm:
@@ -61,38 +66,39 @@ void cosi_proto_process(cosi_proto *proto,struct bufferevent *bev,uint8_t id[UUI
         //case cosi_phase_resp:
         //    cosi_proto_response(proto,bev,packet);
     }
-
     protocol_packet__free_unpacked(packet,NULL);
 }
 
-void cosi_proto_announcement(cosi_proto *proto,struct bufferevent *bev,ProtocolPacket *packet) {
-    if(packet->ann == NULL) {
+void cosi_proto_announcement(cosi_proto *proto,struct bufferevent *bev,ProtocolPacket *p) {
+    if(p->ann == NULL) {
         perr("%s: cosi proto announcement given null announcement",proto->remote);                  
         return;
     }
     assert(proto->state != NULL);
+    pout("%s: cosi proto announcement received",proto->remote);
 
     cosi_state *state = proto->state;
     // generate commitment
     if (!cosi_state_commit(state)) {
         return;
     }
-    
-    ProtocolPacket protoPacket = PROTOCOL_PACKET__INIT;
+    ProtocolPacket packet = PROTOCOL_PACKET__INIT;
+    packet.info = p->info;
     Commitment protoCommit = COMMITMENT__INIT;
     ProtobufCBinaryData protobufComm = {ED25519_POINT_SIZE,state->commit};
     protoCommit.comm = protobufComm;
-    protoPacket.comm = &protoCommit;
+    packet.comm = &protoCommit;
+    packet.phase = (uint32_t) 2;
 
-    if (!cosi_proto_send_packet(bev,packet)) {
+    if (!cosi_proto_send_packet(bev,&packet)) {
         perr("%s: cosi proto announcement could not send back commitment",proto->remote);
     } else {
-        pout("%s: cosi proto sent back announcement",proto->remote);
+        pout("%s: cosi proto sent back commitment",proto->remote);
     }
 }
 
 void cosi_proto_challenge(cosi_proto *proto, struct bufferevent *bev,ProtocolPacket *packet) {
-    assert(packet->chal == NULL);
+    assert(packet->chal != NULL);
     assert(proto->state != NULL);
 
     cosi_state *state = proto->state;
@@ -107,10 +113,12 @@ void cosi_proto_challenge(cosi_proto *proto, struct bufferevent *bev,ProtocolPac
     }
 
     ProtocolPacket p = PROTOCOL_PACKET__INIT; 
+    p.info = packet->info;
     Response response = RESPONSE__INIT;
     ProtobufCBinaryData protobufResponse = {ED25519_SCALAR_SIZE,state->response};
     response.resp = protobufResponse;
     p.resp = &response;
+    p.phase = cosi_phase_resp;
    
     if (!cosi_proto_send_packet(bev,&p)) {
         pout("%s: cosi proto challenge error sending packet",proto->remote);
@@ -119,21 +127,45 @@ void cosi_proto_challenge(cosi_proto *proto, struct bufferevent *bev,ProtocolPac
     }
 }
 
+// XXX Refactor: put that in net + use GOTO
 bool cosi_proto_send_packet(struct bufferevent *bev,ProtocolPacket *packet) {
-    size_t len = protocol_packet__get_packed_size(packet);
+    size_t pack_len = protocol_packet__get_packed_size(packet);
+    size_t whole_len = htonl(pack_len + UUID_SIZE);
+    size_t written;
     uint8_t *buffer;
-    bool ret=false;
+    bool ret=true;
     cosi_packet_exchange_endpoints(packet);
 
-    if((buffer = malloc(len)) == NULL) {
+    if((buffer = malloc(pack_len)) == NULL) {
         return false;
     }
 
-    protocol_packet__pack(packet,buffer);
-     // write it down in the network
-    if (bufferevent_write(bev,(void *)buffer,len) == -1) {
+    written = protocol_packet__pack(packet,buffer);
+
+    // unmarshal packet
+    ProtocolPacket *unbuffer;
+    //print_hexa(" => ",buffer,len);
+    if (( unbuffer = protocol_packet__unpack(NULL,pack_len,buffer)) == NULL) {
+        perr("cosi_proto_send_packet: could not unpack packet packed");
+        return false;
+    }
+    
+    pout("send pack len : %zu",pack_len);
+    print_hexa("send pack : ",buffer,pack_len);
+    // first write the size then id then packet
+    if (bufferevent_write(bev,(void *)(&whole_len),4) == -1) {
         ret = false;
     }
+
+    if (bufferevent_write(bev,(void *)&cosi_packet_id,UUID_SIZE) == -1) {
+        ret = false;
+    }
+
+    if (bufferevent_write(bev,(void *)buffer,pack_len) == -1) {
+        ret = false;
+    }
+    pout("sent %zu bytes to evbuff",(unsigned long) ntohl(whole_len));
+
     free(buffer);
     return ret;
 }

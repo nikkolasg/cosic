@@ -157,11 +157,10 @@ struct  _Token
   ProtobufCBinaryData service_id;
   ProtobufCBinaryData round_id;
   ProtobufCBinaryData tree_node_id;
-  ProtobufCBinaryData cacheid;
 };
 #define TOKEN__INIT \
  { PROTOBUF_C_MESSAGE_INIT (&token__descriptor) \
-    , {0,NULL}, {0,NULL}, {0,NULL}, {0,NULL}, {0,NULL}, {0,NULL}, {0,NULL} }
+    , {0,NULL}, {0,NULL}, {0,NULL}, {0,NULL}, {0,NULL}, {0,NULL} }
 
 
 struct  _TreeMarshal

@@ -1095,7 +1095,7 @@ const ProtobufCMessageDescriptor server_identity__descriptor =
   (ProtobufCMessageInit) server_identity__init,
   NULL,NULL,NULL    /* reserved[123] */
 };
-static const ProtobufCFieldDescriptor token__field_descriptors[7] =
+static const ProtobufCFieldDescriptor token__field_descriptors[6] =
 {
   {
     "roster_id",
@@ -1169,21 +1169,8 @@ static const ProtobufCFieldDescriptor token__field_descriptors[7] =
     0,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
-  {
-    "cacheid",
-    7,
-    PROTOBUF_C_LABEL_REQUIRED,
-    PROTOBUF_C_TYPE_BYTES,
-    0,   /* quantifier_offset */
-    offsetof(Token, cacheid),
-    NULL,
-    NULL,
-    0,             /* flags */
-    0,NULL,NULL    /* reserved1,reserved2, etc */
-  },
 };
 static const unsigned token__field_indices_by_name[] = {
-  6,   /* field[6] = cacheid */
   2,   /* field[2] = proto_id */
   0,   /* field[0] = roster_id */
   4,   /* field[4] = round_id */
@@ -1194,7 +1181,7 @@ static const unsigned token__field_indices_by_name[] = {
 static const ProtobufCIntRange token__number_ranges[1 + 1] =
 {
   { 1, 0 },
-  { 0, 7 }
+  { 0, 6 }
 };
 const ProtobufCMessageDescriptor token__descriptor =
 {
@@ -1204,7 +1191,7 @@ const ProtobufCMessageDescriptor token__descriptor =
   "Token",
   "",
   sizeof(Token),
-  7,
+  6,
   token__field_descriptors,
   token__field_indices_by_name,
   1,  token__number_ranges,

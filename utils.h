@@ -25,7 +25,7 @@
 /*
  * Utility macro definitions
  */
-#define pout(fmt,args...) printf("[+] " fmt "\n",args)
+#define pout(fmt,args...) printf("[+] " fmt "\n",##args)
 
 #define perr(fmt,args...) fprintf(stderr,"[-] " fmt "\n",##args)
 
@@ -41,7 +41,7 @@
     } \
 }
 
-
+#define PROTOBUF_C_UNPACK_ERROR(args...) printf(args);
 
 typedef struct {
     uint8_t *pk;

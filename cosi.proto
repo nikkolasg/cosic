@@ -58,7 +58,6 @@ message Token {
   required bytes service_id = 4;
   required bytes round_id = 5;
   required bytes tree_node_id = 6;
-  required bytes cacheid = 7;
 }
 
 message TreeMarshal {

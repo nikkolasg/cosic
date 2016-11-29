@@ -44,26 +44,48 @@ bool net_is_ip_valid(char * ip)
 // Connection has something to read for us
 static void read_cb(struct bufferevent *bev, void *ctx)
 {
-    conn_state *state = (conn_state *) ctx;
-
     // first read the size which is in a uint32_t then type of message
     // which is unfortunatly currently a UUID => 16bytes
-    uint32_t size;
+    uint32_t size = 0;
     uint8_t id[UUID_SIZE] = {0};
     uint8_t *packet;
     size_t n = 0;
     size_t ssize = sizeof(size);
 
-    // read the size
-    if ((n == bufferevent_read(bev,(void *) (&size),ssize)) != ssize) {
-        perr("%s: could not read size of packet",state->remote);
+
+    conn_state *state = (conn_state *) ctx;
+    // lets check that we have the whole packet
+    struct evbuffer *input = bufferevent_get_input(bev);
+    if ((n = evbuffer_copyout(input, (void *) (&size), ssize)) == -1) {
+        perr("%s: evbuffer_copyout not working",state->remote);
+        return;
+    } else if (n < ssize) {
+        perr("%s: evbuffer not have enough data to read size",state->remote);
+        return;
+    }
+    size = ntohl(size);
+    if ((n = evbuffer_get_length(input)) < size+4) {
+        perr("%s: evbuffer not have enough data to read whole packet %zu/%lu",
+                state->remote,n,(unsigned long)size);
         return;
     }
 
+    pout("%s: evbuffer.length() %zu vs read size %lu",state->remote,
+            evbuffer_get_length(input),(unsigned long) size);
+
+    // Now actually read the thing 
+    // XXX TODO refactor here so we re-use code.
+
+    // read the size
+    if ((n = bufferevent_read(bev,(void *) (&size),ssize)) != ssize) {
+        perr("%s: read only %zu/%zu for size of packet",state->remote,n,ssize);
+        return;
+    }
+    size = ntohl(size);
     // read the type
     n = bufferevent_read(bev,(void *) id,UUID_SIZE);
     if (n != UUID_SIZE) {
-        perr("%s: could not read type of packet",state->remote);
+        perr("%s: read only %zu/%d for type of packet",state->remote,n,UUID_SIZE);
         return;
     }
 
@@ -74,10 +96,11 @@ static void read_cb(struct bufferevent *bev, void *ctx)
         return;
     }
 
-    if((n == bufferevent_read(bev,(void *) packet,size)) != size) {
+    pout("%s: will call bufferevent_read with size %lu",state->remote,(unsigned long) size);
+    if((n = bufferevent_read(bev,(void *) packet,size)) != size) {
         // XXX TODO check how to "wait" for next bytes if there are not enough
-        perr("%s: could not read enough from connection for filling packet",
-                state->remote);
+        perr("%s: read only %zu/%lu from connection for filling packet",
+                state->remote,n,(unsigned long)size);
         return;
     }    
 
@@ -85,7 +108,12 @@ static void read_cb(struct bufferevent *bev, void *ctx)
 
     // XXX TODO later make a full dispatcher depending on type with function
     // pointers.
-    cosi_proto_process(state->proto,bev,id,packet,size);
+    if (!state->si_received) {
+        conn_state_process_si(state,id,packet,size); 
+    } else {
+        cosi_proto_process(state->proto,bev,id,packet,size);
+        free(packet);
+    }
 }
 
 // Event callback from connection - same for every connection for now.
@@ -96,6 +124,7 @@ static void generic_event_cb(struct bufferevent *bev, short events, void *ctx)
     if (events & (BEV_EVENT_EOF | BEV_EVENT_ERROR)) {
             bufferevent_free(bev);
     }
+    conn_state_free((conn_state *)ctx);
 }
 
 // Accept connection callback from listener
@@ -109,6 +138,8 @@ static void accept_conn_cb(struct evconnlistener *listener,
     int flags = BEV_OPT_CLOSE_ON_FREE;
     struct bufferevent *bev = bufferevent_socket_new(base, fd, flags);
 
+    // read + write at least 4 bytes of size + 16 bytes of type
+    bufferevent_setwatermark(bev,EV_READ | EV_WRITE,4+16,0);
     conn_state *cstate;
     if((cstate = malloc(sizeof(cstate))) == NULL) {
         perr("could not malloc state");
@@ -163,9 +194,30 @@ void conn_state_init(conn_state *s, struct sockaddr *add,int len,void *gdata) {
 
     s->remote = remote;
     s->material = (material *) gdata;
+    s->si_received = false;
+    util_malloc((void *)&(s->proto),sizeof(cosi_proto));
     // XXX TODO later, have a full dispatcher instead of hard coding the
     // processor
     cosi_proto_init(s->proto,remote,s->material);
+}
+
+void conn_state_process_si(conn_state *s,const uint8_t id[UUID_SIZE],
+                           const uint8_t *buffer, size_t len) {
+    //assert(s != NULL && s->remote != NULL);
+    // check if id is server identity
+    if(memcmp(id,server_identity_id,UUID_SIZE) != 0) {
+        perr("%s: conn state received non server identity type",s->remote);
+        return;
+    }
+
+    ServerIdentity *si;
+    if ((si = server_identity__unpack(NULL,len,buffer)) == NULL) {
+        perr("%s: conn state error unpack server identity",s->remote);
+        return;
+    }
+
+    s->si_received = true;
+    pout("%s: conn state received identity (addr %s)",s->remote,si->address);
 }
 
 void conn_state_free(conn_state *s) {
@@ -176,6 +228,7 @@ void conn_state_free(conn_state *s) {
         free(s->remote);
         s->remote = NULL;
     }
+
     free(s);
 }
 
@@ -210,7 +263,7 @@ void run (const int port, void *data)
     // how many incoming connection not yet accepted at same time
     backlog = -1;
     listener = evconnlistener_new_bind(ebase, accept_conn_cb, data,
-             flags,-1, (struct sockaddr*)&sin, sizeof(sin));
+             flags,backlog, (struct sockaddr*)&sin, sizeof(sin));
 
     if (!listener) {
         pfail("could not allocate new listener",NULL);
