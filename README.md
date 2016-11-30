@@ -6,6 +6,8 @@ See https://github.com/dedis/cothority/app/cosi for more informations.
 
 **WARNING**: This is highly experimental and is not guaranteed to always work. USE AT YOUR OWN RISK.
 
+It's also not finished !
+
 But still, it's fun.
 
 # Why ? 
@@ -16,6 +18,13 @@ library does not make it Golang-dependant. So it's NOT a complete implementation
 of the CoSi protocol but only for a leaf node of the tree. That avoids the
 complexity of implementing the tree overlay which is not clearly defined (and is
 also a bit too complex for what it should be).
+
+# How can I use it ?
+
+Well, it's complex for the moment. You need to setup one Golang root node, with
+one C leaf node, create the group toml corresponding and then launch the cosi
+client to sign something... Yes, I've told you it's not ready yet :) I'm
+planning to write a script to test it easily.
 
 # Implementation notes
 
