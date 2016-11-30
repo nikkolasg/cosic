@@ -43,5 +43,5 @@ say "I've done it". By real I mean involving crypto + network + "complex"
 with differents parts and not just a simple script.
 
 That being said, it's far from being done: it misses some basic "object
-oriented" pattern in C, and is not stable, so there's *lot* of stuff to do yet so
-it's a safe implementation.
+oriented" pattern in C, and is not stable, so there's *lot* of stuff to do yet
+so it can be called a safe implementation.
