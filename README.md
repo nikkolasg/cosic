@@ -29,8 +29,9 @@ planning to write a script to test it easily.
 # Implementation notes
 
 * Written for >= C99
+* compiled with clang 3.9.0
 * dependency on libevent >= 2.0.22
-* dependency on OpenSSL
+* dependency on OpenSSL 1.0.2j
 * Supposed to be platform-independent, THOUGH there's still the `random_bytes`
   part which is for the moment hard coded for Linux (SYS_getrandom syscall)
 
