@@ -10,7 +10,7 @@
 #include "cosi.pb-c.h"
 
 typedef struct {
-    const uint8_t * secret;
+    const material * m;
     uint8_t * random;
     uint8_t * commit;
     uint8_t * challenge;
@@ -24,7 +24,7 @@ typedef struct {
     const material * material;
 } cosi_proto;
 
-void cosi_state_init(cosi_state *state,const char *remote,const uint8_t *secret);
+void cosi_state_init(cosi_state *state,const char *remote,const material *m);
 bool cosi_state_commit(cosi_state * state);
 bool cosi_state_challenge(cosi_state *state,const uint8_t *challenge);
 bool cosi_state_response(cosi_state *state);

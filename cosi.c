@@ -11,6 +11,7 @@
 #include "uuid.h"
 #include "ed25519.h"
 
+#include <openssl/sha.h>
 #include <event2/buffer.h>
 
 const uint32_t cosi_phase_ann   = 1;
@@ -28,7 +29,7 @@ void cosi_proto_init(cosi_proto * proto,const char *remote,const material *mater
     if (!util_malloc((void*)&state,sizeof(cosi_state))) {
         pfail("%s: can not allocate cosi_state",remote);
     }
-    cosi_state_init(state,remote,material->pk);
+    cosi_state_init(state,remote,material);
 
     proto->state = state;
     proto->remote = remote;
@@ -150,8 +151,8 @@ bool cosi_proto_send_packet(struct bufferevent *bev,ProtocolPacket *packet) {
         return false;
     }
     
-    pout("send pack len : %zu",pack_len);
-    print_hexa("send pack : ",buffer,pack_len);
+    /*pout("send pack len : %zu",pack_len);*/
+    /*print_hexa("send pack : ",buffer,pack_len);*/
     // first write the size then id then packet
     if (bufferevent_write(bev,(void *)(&whole_len),4) == -1) {
         ret = false;
@@ -187,16 +188,14 @@ void cosi_packet_exchange_endpoints(ProtocolPacket *packet) {
  *  Description:  init the cosi struct with the secret key and the remote node
  *  address. IT DOES NOT MAKE A COPY OF THE SECRET, only takes the address.
  *  Let's avoid create copies of secret everywhere.
- *                state->secret & state->remote are guaranteed to be non NULL if
- *                the call returned true.
  *  NOTE: you MUST call cosi_state_free when finished in order to free
  *  the random bytes.
  * =====================================================================================
  */
-void cosi_state_init(cosi_state *state,const char *remote,const uint8_t *secret) {
+void cosi_state_init(cosi_state *state,const char *remote,const material *m) {
     assert(state != NULL);
 
-    state->secret = secret;
+    state->m = m;
     state->remote = remote;
 
     pout("new cosi initiated with %s",remote);
@@ -245,7 +244,7 @@ bool cosi_state_commit(cosi_state *state) {
     ge_scalarmult_base(&R, urandom);
     ge_p3_tobytes(ucommit, &R);
 
-    pout("%s cosi: generated commit",state->remote);
+    print_hexa("cosi: generated commit",state->commit,ED25519_POINT_SIZE);
     return true;
 }
 /* 
@@ -265,6 +264,7 @@ bool cosi_state_challenge(cosi_state *state,const uint8_t *challenge) {
         return false;
     }
     memcpy(state->challenge,challenge,ED25519_SCALAR_SIZE);
+    print_hexa("cosi: stored challenge ",state->challenge,ED25519_SCALAR_SIZE);
     return true;
 }
 
@@ -287,8 +287,8 @@ bool cosi_state_response(cosi_state *state) {
     memset(state->response,0,ED25519_SCALAR_SIZE);
     
     // r = challenge * secret + random
-    sc_muladd(state->response, state->secret,state->challenge, state->random);
-    sc_reduce(state->response);
+    sc_muladd(state->response, state->m->sk, state->challenge, state->random);
+    print_hexa("cosi: generated response ", state->response, ED25519_SCALAR_SIZE);
     return true;
 } 
 
@@ -300,10 +300,7 @@ bool cosi_state_response(cosi_state *state) {
  * =====================================================================================
  */
 void cosi_state_free(cosi_state *state) {
-    if (state == NULL) {
-        perr("cosi state free-ing NULL pointer",NULL);
-        return;
-    }
+    assert(state == NULL);
 
     free(state->challenge);
     free(state->commit);
@@ -318,9 +315,64 @@ void cosi_state_free(cosi_state *state) {
 
 extern inline bool cosi_state_check(cosi_state * state){ 
     if (state == NULL 
-            || state->secret == NULL 
+            || state->m == NULL 
             || state->remote == NULL) {
         return false;
     }
     return true;
+}
+
+// CoSi signature: s = commit + challenge * private
+// where challenge = H( COMMIT || Public || Message)
+// Difference with EdDSA: challenge = H( R(priv) || Public || Message)
+// where R(priv) is deterministic according to the seed of the private key.
+// buff MUST BE of size 64 bytes == ED25519_SIG_SIZE
+// output is sig = challenge || s
+void cosi_state_sig(cosi_state *state,uint8_t *msg,size_t msg_len,void *buff) {
+    assert(state->m != NULL);
+    assert(state->response != NULL);
+    assert(state->commit != NULL);
+
+    SHA512_CTX ctx;
+    SHA512_Init(&ctx);
+    SHA512_Update(&ctx,state->commit,ED25519_POINT_SIZE);
+    SHA512_Update(&ctx,state->m->pk,ED25519_PUBLIC_SIZE);
+    SHA512_Update(&ctx,msg,msg_len);
+    SHA512_Final(state->challenge,&ctx);
+
+    sc_reduce(state->challenge);
+    sc_muladd(buff+32,state->m->sk,state->challenge,state->random);
+    
+    memcpy(buff,state->commit,ED25519_POINT_SIZE);
+}
+
+bool cosi_verify_signature(uint8_t *sig,uint8_t *public,uint8_t *message,size_t len) {
+    uint8_t *rb = sig;
+    uint8_t *sb = sig + 32;
+    uint8_t rcheck[ED25519_POINT_SIZE];
+    uint8_t k[SHA512_DIGEST_LENGTH];
+
+    ge_p3 A;
+    ge_p2 R;
+
+    if (ge_frombytes_negate_vartime(&A, public) != 0) {
+        return -1;
+    }
+
+    SHA512_CTX ctx;
+    SHA512_Init(&ctx);
+    SHA512_Update(&ctx,rb,ED25519_POINT_SIZE);
+    SHA512_Update(&ctx,public,ED25519_PUBLIC_SIZE);
+    SHA512_Update(&ctx,message,len);
+    SHA512_Final(k,&ctx);
+
+    sc_reduce(k);
+
+    ge_double_scalarmult_vartime(&R, k, &A, sb);
+    ge_tobytes(rcheck, &R);
+
+    // no need to get paranoid with constant time equality since this is to
+    // check public values...
+    // https://cryptocoding.net/index.php/Coding_rules#Compare_secret_strings_in_constant_time
+    return memcmp(rcheck,rb,ED25519_POINT_SIZE) == 0;
 }

@@ -3,9 +3,26 @@
 
 #include "ed25519.h"
 
+void ed25519_mulbase(uint8_t *point, uint8_t *scalar) {
+    ge_p3 R;
+    ge_scalarmult_base(&R, scalar);
+    ge_p3_tobytes(point, &R);
+}
+
+static unsigned char zero[32];
+
 /* base[i][j] = (j+1)*256^i*B */
 static const ge_precomp base[32][8] = {
-#include "base.h"
+    #include "base.h"
+};
+
+static const ge_precomp Bi[8] = {
+    #include "base2.h"
+};
+
+/* 2 * d = 16295367250680780974490674513165176452449235426866156013048779062215315747161 */
+static const fe d2 = {
+    -21827239,-5839606,-30745221,13898782,229458,15978800,-12551817,-6495438,29715968,9444199
 };
 
  static uint64_t load_3(const unsigned char *in)
@@ -1790,3 +1807,369 @@ void sc_muladd(unsigned char *s,const unsigned char *a,const unsigned char *b,co
 }
 
 
+/*
+ h = a * B
+ where a = a[0]+256*a[1]+...+256^31 a[31]
+ B is the Ed25519 base point (x,4/5) with x positive.
+ *
+ Preconditions:
+ a[31] <= 127
+ */
+
+/*
+ r = a * A + b * B
+ where a = a[0]+256*a[1]+...+256^31 a[31].
+ and b = b[0]+256*b[1]+...+256^31 b[31].
+ B is the Ed25519 base point (x,4/5) with x positive.
+ */
+void ge_double_scalarmult_vartime(ge_p2 *r,const unsigned char *a,const ge_p3 *A,const unsigned char *b)
+{
+    signed char aslide[256];
+    signed char bslide[256];
+    ge_cached Ai[8]; /* A,3A,5A,7A,9A,11A,13A,15A */
+    ge_p1p1 t;
+    ge_p3 u;
+    ge_p3 A2;
+    int i;
+
+    slide(aslide,a);
+    slide(bslide,b);
+
+    ge_p3_to_cached(&Ai[0],A);
+    ge_p3_dbl(&t,A); ge_p1p1_to_p3(&A2,&t);
+    ge_add(&t,&A2,&Ai[0]); ge_p1p1_to_p3(&u,&t); ge_p3_to_cached(&Ai[1],&u);
+    ge_add(&t,&A2,&Ai[1]); ge_p1p1_to_p3(&u,&t); ge_p3_to_cached(&Ai[2],&u);
+    ge_add(&t,&A2,&Ai[2]); ge_p1p1_to_p3(&u,&t); ge_p3_to_cached(&Ai[3],&u);
+    ge_add(&t,&A2,&Ai[3]); ge_p1p1_to_p3(&u,&t); ge_p3_to_cached(&Ai[4],&u);
+    ge_add(&t,&A2,&Ai[4]); ge_p1p1_to_p3(&u,&t); ge_p3_to_cached(&Ai[5],&u);
+    ge_add(&t,&A2,&Ai[5]); ge_p1p1_to_p3(&u,&t); ge_p3_to_cached(&Ai[6],&u);
+    ge_add(&t,&A2,&Ai[6]); ge_p1p1_to_p3(&u,&t); ge_p3_to_cached(&Ai[7],&u);
+
+    ge_p2_0(r);
+
+    for (i = 255;i >= 0;--i) {
+        if (aslide[i] || bslide[i]) break;
+    }
+
+    for (;i >= 0;--i) {
+        ge_p2_dbl(&t,r);
+
+        if (aslide[i] > 0) {
+            ge_p1p1_to_p3(&u,&t);
+            ge_add(&t,&u,&Ai[aslide[i]/2]);
+        } else if (aslide[i] < 0) {
+            ge_p1p1_to_p3(&u,&t);
+            ge_sub(&t,&u,&Ai[(-aslide[i])/2]);
+        }
+
+        if (bslide[i] > 0) {
+            ge_p1p1_to_p3(&u,&t);
+            ge_madd(&t,&u,&Bi[bslide[i]/2]);
+        } else if (bslide[i] < 0) {
+            ge_p1p1_to_p3(&u,&t);
+            ge_msub(&t,&u,&Bi[(-bslide[i])/2]);
+        }
+
+        ge_p1p1_to_p2(r,&t);
+    }
+}
+
+void slide(signed char *r,const unsigned char *a)
+{
+    int i;
+    int b;
+    int k;
+
+    for (i = 0;i < 256;++i)
+        r[i] = 1 & (a[i >> 3] >> (i & 7));
+
+    for (i = 0;i < 256;++i)
+        if (r[i]) {
+            for (b = 1;b <= 6 && i + b < 256;++b) {
+                if (r[i + b]) {
+                    if (r[i] + (r[i + b] << b) <= 15) {
+                        r[i] += r[i + b] << b; r[i + b] = 0;
+                    } else if (r[i] - (r[i + b] << b) >= -15) {
+                        r[i] -= r[i + b] << b;
+                        for (k = i + b;k < 256;++k) {
+                            if (!r[k]) {
+                                r[k] = 1;
+                                break;
+                            }
+                            r[k] = 0;
+                        }
+                    } else
+                        break;
+                }
+            }
+        }
+
+}
+
+/*
+ r = p - q
+ */
+
+void ge_msub(ge_p1p1 *r,const ge_p3 *p,const ge_precomp *q)
+{
+    fe t0;
+
+    fe_add(r->X, p->Y, p->X);
+    fe_sub(r->Y, p->Y, p->X);
+    fe_mul(r->Z, r->X, q->yminusx);
+    fe_mul(r->Y, r->Y, q->yplusx);
+    fe_mul(r->T, q->xy2d, p->T);
+    fe_add(t0, p->Z, p->Z);
+    fe_sub(r->X, r->Z, r->Y);
+    fe_add(r->Y, r->Z, r->Y);
+    fe_sub(r->Z, t0, r->T);
+    fe_add(r->T, t0, r->T);
+}
+
+
+/* 37095705934669439343138083508754565189542113879843219016388785533085940283555 */
+static const fe d = {
+    -10913610,13857413,-15372611,6949391,114729,-8787816,-6275908,-3247719,-18696448,-12055116
+};
+
+/* sqrt(-1) */
+static const fe sqrtm1 = {
+    -32595792,-7943725,9377950,3500415,12389472,-272473,-25146209,-2005654,326686,11406482
+};
+
+int ge_frombytes_negate_vartime(ge_p3 *h,const unsigned char *s)
+{
+    fe u;
+    fe v;
+    fe v3;
+    fe vxx;
+    fe check;
+
+    fe_frombytes(h->Y,s);
+    fe_1(h->Z);
+    fe_sq(u,h->Y);
+    fe_mul(v,u,d);
+    fe_sub(u,u,h->Z);       /* u = y^2-1 */
+    fe_add(v,v,h->Z);       /* v = dy^2+1 */
+
+    fe_sq(v3,v);
+    fe_mul(v3,v3,v);        /* v3 = v^3 */
+    fe_sq(h->X,v3);
+    fe_mul(h->X,h->X,v);
+    fe_mul(h->X,h->X,u);    /* x = uv^7 */
+
+    fe_pow22523(h->X,h->X); /* x = (uv^7)^((q-5)/8) */
+    fe_mul(h->X,h->X,v3);
+    fe_mul(h->X,h->X,u);    /* x = uv^3(uv^7)^((q-5)/8) */
+
+    fe_sq(vxx,h->X);
+    fe_mul(vxx,vxx,v);
+    fe_sub(check,vxx,u);    /* vx^2-u */
+    if (fe_isnonzero(check)) {
+        fe_add(check,vxx,u);  /* vx^2+u */
+        if (fe_isnonzero(check)) {
+            return -1;
+        }
+        fe_mul(h->X,h->X,sqrtm1);
+    }
+
+    if (fe_isnegative(h->X) == (s[31] >> 7)) {
+        fe_neg(h->X,h->X);
+    }
+    fe_mul(h->T,h->X,h->Y);
+
+    return 0;
+}
+
+
+/*
+ r = p + q
+ */
+void ge_add(ge_p1p1 *r,const ge_p3 *p,const ge_cached *q)
+{
+    fe t0;
+
+    fe_add(r->X, p->Y, p->X);
+    fe_sub(r->Y, p->Y, p->X);
+    fe_mul(r->Z, r->X, q->YplusX);
+    fe_mul(r->Y, r->Y, q->YminusX);
+    fe_mul(r->T, q->T2d, p->T);
+    fe_mul(r->X, p->Z, q->Z);
+    fe_add(t0, r->X, r->X);
+    fe_sub(r->X, r->Z, r->Y);
+    fe_add(r->Y, r->Z, r->Y);
+    fe_add(r->Z, t0, r->T);
+    fe_sub(r->T, t0, r->T);
+}
+
+extern void ge_p3_to_cached(ge_cached *r,const ge_p3 *p)
+{
+    fe_add(r->YplusX,p->Y,p->X);
+    fe_sub(r->YminusX,p->Y,p->X);
+    fe_copy(r->Z,p->Z);
+    fe_mul(r->T2d,p->T,d2);
+}
+
+void ge_p2_0(ge_p2 *h)
+{
+    fe_0(h->X);
+    fe_1(h->Y);
+    fe_1(h->Z);
+}
+
+/*
+ r = p - q
+ */
+
+void ge_sub(ge_p1p1 *r,const ge_p3 *p,const ge_cached *q)
+{
+    fe t0;
+
+    fe_add(r->X, p->Y, p->X);
+    fe_sub(r->Y, p->Y, p->X);
+    fe_mul(r->Z, r->X, q->YminusX);
+    fe_mul(r->Y, r->Y, q->YplusX);
+    fe_mul(r->T, q->T2d, p->T);
+    fe_mul(r->X, p->Z, q->Z);
+    fe_add(t0, r->X, r->X);
+    fe_sub(r->X, r->Z, r->Y);
+    fe_add(r->Y, r->Z, r->Y);
+    fe_sub(r->Z, t0, r->T);
+    fe_add(r->T, t0, r->T);
+}
+
+
+/*
+ Ignores top bit of h.
+ */
+
+void fe_frombytes(fe h,const unsigned char *s)
+{
+    int64_t h0 = load_4(s);
+    int64_t h1 = load_3(s + 4) << 6;
+    int64_t h2 = load_3(s + 7) << 5;
+    int64_t h3 = load_3(s + 10) << 3;
+    int64_t h4 = load_3(s + 13) << 2;
+    int64_t h5 = load_4(s + 16);
+    int64_t h6 = load_3(s + 20) << 7;
+    int64_t h7 = load_3(s + 23) << 5;
+    int64_t h8 = load_3(s + 26) << 4;
+    int64_t h9 = (load_3(s + 29) & 8388607) << 2;
+    int64_t carry0;
+    int64_t carry1;
+    int64_t carry2;
+    int64_t carry3;
+    int64_t carry4;
+    int64_t carry5;
+    int64_t carry6;
+    int64_t carry7;
+    int64_t carry8;
+    int64_t carry9;
+
+    carry9 = (h9 + (int64_t) (1L << 24)) >> 25; h0 += carry9 * 19; h9 -= carry9 * ((uint64_t) 1L << 25);
+    carry1 = (h1 + (int64_t) (1L << 24)) >> 25; h2 += carry1; h1 -= carry1 * ((uint64_t) 1L << 25);
+    carry3 = (h3 + (int64_t) (1L << 24)) >> 25; h4 += carry3; h3 -= carry3 * ((uint64_t) 1L << 25);
+    carry5 = (h5 + (int64_t) (1L << 24)) >> 25; h6 += carry5; h5 -= carry5 * ((uint64_t) 1L << 25);
+    carry7 = (h7 + (int64_t) (1L << 24)) >> 25; h8 += carry7; h7 -= carry7 * ((uint64_t) 1L << 25);
+
+    carry0 = (h0 + (int64_t) (1L << 25)) >> 26; h1 += carry0; h0 -= carry0 * ((uint64_t) 1L << 26);
+    carry2 = (h2 + (int64_t) (1L << 25)) >> 26; h3 += carry2; h2 -= carry2 * ((uint64_t) 1L << 26);
+    carry4 = (h4 + (int64_t) (1L << 25)) >> 26; h5 += carry4; h4 -= carry4 * ((uint64_t) 1L << 26);
+    carry6 = (h6 + (int64_t) (1L << 25)) >> 26; h7 += carry6; h6 -= carry6 * ((uint64_t) 1L << 26);
+    carry8 = (h8 + (int64_t) (1L << 25)) >> 26; h9 += carry8; h8 -= carry8 * ((uint64_t) 1L << 26);
+
+    h[0] = (int32_t) h0;
+    h[1] = (int32_t) h1;
+    h[2] = (int32_t) h2;
+    h[3] = (int32_t) h3;
+    h[4] = (int32_t) h4;
+    h[5] = (int32_t) h5;
+    h[6] = (int32_t) h6;
+    h[7] = (int32_t) h7;
+    h[8] = (int32_t) h8;
+    h[9] = (int32_t) h9;
+}
+
+void fe_pow22523(fe out,const fe z)
+{
+    fe t0;
+    fe t1;
+    fe t2;
+    int i;
+
+    fe_sq(t0, z);
+    fe_sq(t1, t0);
+    fe_sq(t1, t1);
+    fe_mul(t1, z, t1);
+    fe_mul(t0, t0, t1);
+    fe_sq(t0, t0);
+    fe_mul(t0, t1, t0);
+    fe_sq(t1, t0);
+    for (i = 1; i < 5; ++i) {
+        fe_sq(t1, t1);
+    }
+    fe_mul(t0, t1, t0);
+    fe_sq(t1, t0);
+    for (i = 1; i < 10; ++i) {
+        fe_sq(t1, t1);
+    }
+    fe_mul(t1, t1, t0);
+    fe_sq(t2, t1);
+    for (i = 1; i < 20; ++i) {
+        fe_sq(t2, t2);
+    }
+    fe_mul(t1, t2, t1);
+    fe_sq(t1, t1);
+    for (i = 1; i < 10; ++i) {
+        fe_sq(t1, t1);
+    }
+    fe_mul(t0, t1, t0);
+    fe_sq(t1, t0);
+    for (i = 1; i < 50; ++i) {
+        fe_sq(t1, t1);
+    }
+    fe_mul(t1, t1, t0);
+    fe_sq(t2, t1);
+    for (i = 1; i < 100; ++i) {
+        fe_sq(t2, t2);
+    }
+    fe_mul(t1, t2, t1);
+    fe_sq(t1, t1);
+    for (i = 1; i < 50; ++i) {
+        fe_sq(t1, t1);
+    }
+    fe_mul(t0, t1, t0);
+    fe_sq(t0, t0);
+    fe_sq(t0, t0);
+    fe_mul(out, t0, z);
+}
+
+int fe_isnonzero(const fe f)
+{
+    unsigned char s[32];
+    fe_tobytes(s,f);
+    return crypto_verify_32(s,zero);
+}
+int crypto_verify_32(const unsigned char *x, const unsigned char *y)
+{
+    uint_fast16_t d = 0U;
+    int           i;
+
+    for (i = 0; i < 32; i++) {
+        d |= x[i] ^ y[i];
+    }
+    return (1 & ((d - 1) >> 8)) - 1;
+}
+
+void ge_tobytes(unsigned char *s,const ge_p2 *h)
+{
+    fe recip;
+    fe x;
+    fe y;
+
+    fe_invert(recip,h->Z);
+    fe_mul(x,h->X,recip);
+    fe_mul(y,h->Y,recip);
+    fe_tobytes(s,y);
+    s[31] ^= fe_isnegative(x) << 7;
+}

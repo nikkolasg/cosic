@@ -19,7 +19,7 @@
 #pragma once
 
 #include <stdbool.h>
-#include <stdint.h>
+#include <inttypes.h>
 #include <stdlib.h>
 
 /*
@@ -44,8 +44,8 @@
 #define PROTOBUF_C_UNPACK_ERROR(args...) printf(args);
 
 typedef struct {
+    uint8_t *sk;
     uint8_t *pk;
-    size_t len;
 } material;
 
 /*

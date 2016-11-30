@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/dedis/cothority/app/lib/config"
+	"github.com/dedis/cothority/crypto"
 	"github.com/dedis/cothority/network"
 	"github.com/dedis/crypto/ed25519"
 	"github.com/dedis/crypto/random"
@@ -27,6 +28,17 @@ func main() {
 	private := suite.NewKey(random.Stream)
 	public := suite.Point().Mul(nil, private)
 	address := network.NewTCPAddress("0.0.0.0:" + os.Args[2])
+
+	privHex, _ := crypto.ScalarHex(suite, private)
+	pubHex, _ := crypto.PubHex(suite, public)
+
+	sconf := &config.CothoritydConfig{
+		Public:  pubHex,
+		Private: privHex,
+		Address: address,
+	}
+
+	sconf.Save("config.toml")
 
 	stoml := config.NewServerToml(suite, public, address)
 

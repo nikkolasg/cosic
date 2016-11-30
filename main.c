@@ -53,17 +53,20 @@ int main(int argc, char *argv[]) {
 
     // read private key
     // XXX move that into ed25519 file
-    uint8_t *private[ED25519_PRIVATE_SIZE] = {0};
+    uint8_t private[ED25519_PRIVATE_SIZE] = {0};
+    uint8_t public[ED25519_PUBLIC_SIZE] = {0};
     char *filename = argv[2];
     if (!read_file(filename, private, ED25519_PRIVATE_SIZE)) {
         pfail("could not read properly private key.",NULL);
     }
+    ed25519_mulbase(public,private);
     material mat;
-    mat.pk = (uint8_t*)private;
-    mat.len = ED25519_PRIVATE_SIZE;
+    mat.sk = (uint8_t*)private;
+    mat.pk = (uint8_t*)public;
 
     // XXX Change to print public key of course
     print_hexa("[+] private key: ",private,ED25519_PRIVATE_SIZE);
+    print_hexa("[+] public key: ",public,ED25519_PUBLIC_SIZE);
 
     run(port,(void *)&mat);
 

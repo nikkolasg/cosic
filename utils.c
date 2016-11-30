@@ -16,7 +16,7 @@
  * =====================================================================================
  */
 
-#include <stdint.h>
+#include <inttypes.h>
 #include <stdbool.h>
 #include <assert.h>
 #include <fcntl.h>
@@ -91,7 +91,7 @@ bool read_file(const char *filename, void * buffer, size_t len)
         perr("not able to read %zu bytes from private key file",len);
         return false;
     }
-
+    close(fd);
     return true;
 }
 
@@ -108,7 +108,7 @@ void print_hexa(const char *prepend,const void *buffer, size_t len)
     const uint8_t *buff = buffer;
     printf("%s",prepend);
     for(size_t i=0; i < len; i++) {
-        printf("%02x",buff[i]);
+        printf("%02hhx",buff[i]);
     }
     printf("\n");
 }
