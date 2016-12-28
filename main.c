@@ -1,19 +1,3 @@
-/*
- * =====================================================================================
- *
- *       Filename:  main.c
- *
- *        Version:  1.0
- *        Created:  11/25/2016 02:16:32 PM
- *       Revision:  none
- *       Compiler:  clang
- *
- *         Author:  nikkolasg (), nikkolasg@gmail.com
- *   Organization:  
- *
- * =====================================================================================
- */
-
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>

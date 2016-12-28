@@ -1,20 +1,3 @@
-/*
- * =====================================================================================
- *
- *       Filename:  net.c
- *
- *    Description:  network operations related primitives
- *
- *        Version:  1.0
- *        Created:  11/25/2016 02:32:19 PM
- *       Revision:  none
- *       Compiler:  clang
- *
- *         Author:  nikkolasg (), nikkolasg@gmail.com
- *   Organization:  
- *
- * =====================================================================================
- */
 #include <stdbool.h>
 #include <errno.h>
 #include <arpa/inet.h>
@@ -205,6 +188,9 @@ static void libevent_log(int severity, const char *msg)
     perr("[%s] %s", s, msg);
 }
 
+/*
+ * writes the size, the id and the buffer.
+ */
 void net_conn_send_packet(const net_conn *c,const net_packet *packet) {
     assert(c && c->priv && c->priv->bev);
     assert(c && c->si && c->si->address);
@@ -213,7 +199,7 @@ void net_conn_send_packet(const net_conn *c,const net_packet *packet) {
     /*pout("send pack len : %zu",pack_len);*/
     /*print_hexa("send pack : ",buffer,pack_len);*/
     // first write the size then id then packet
-    if (bufferevent_write(bev,(void *)(&(packet->len)),4) == -1) {
+    if (bufferevent_write(bev,(void *)(&(packet->len + UUID_SIZE)),4) == -1) {
         perr("%s: could not write size",c->si->address);
         return;
     }
@@ -304,11 +290,8 @@ void net_conn_dispatch(net_conn *s, const net_packet *packet) {
 }
 
 /* 
- * ===  FUNCTION  ======================================================================
- *         Name:  run
- *  Description:  starts a listener on *address*. data is a generic pointer that
- *  will be given to every callbacks used by libevent.
- * =====================================================================================
+ *  Starts a listener on *address*. data is a generic pointer that will 
+ *  be given to every callbacks used by libevent.
  */
 void run (const int port, const net_platform_list *list )
 {
@@ -348,5 +331,3 @@ void run (const int port, const net_platform_list *list )
         pfail("error with dispatching -> abort.",NULL); 
     }
 }
-
-

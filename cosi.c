@@ -64,6 +64,9 @@ bool cosi_platform_accept_id(net_platform *plat, const uint8_t id[UUID_SIZE]) {
     return true;
 }
 
+/*
+ * it unpacks the packet and dispatch it to the proto.
+ */
 void cosi_platform_process(net_platform *plat, const net_conn *c,const net_packet *packet) {
     assert(plat && c && c->si && packet);     
 
@@ -233,14 +236,10 @@ void cosi_packet_exchange_endpoints(const ProtocolPacket *incoming,ProtocolPacke
 }
 
 /* 
- * ===  FUNCTION  ======================================================================
- *         Name:  cosi_state_init
- *  Description:  init the cosi struct with the secret key and the remote node
- *  address. IT DOES NOT MAKE A COPY OF THE SECRET, only takes the address.
- *  Let's avoid create copies of secret everywhere.
+ *  init the cosi struct with the secret key and the remote node
+ *  address. 
  *  NOTE: you MUST call cosi_state_free when finished in order to free
  *  the random bytes.
- * =====================================================================================
  */
 cosi_state * cosi_state_new(const material *m) {
     assert(m);
@@ -254,12 +253,8 @@ cosi_state * cosi_state_new(const material *m) {
 }
 
 /* 
- * ===  FUNCTION  ======================================================================
- *         Name:  cosi_state_commit
- *  Description:  generate the random / commit pair.
- *                state->random & state->commit are guaranteed to be non NULL if
- *                the call returned true.
- * =====================================================================================
+ * Generate the random / commit pair. state->random & state->commit 
+ * are guaranteed to be non NULL if the call returned true.
  */
 bool cosi_state_commit(cosi_state *state) {
     assert(state);
@@ -298,12 +293,8 @@ bool cosi_state_commit(cosi_state *state) {
     return true;
 }
 /* 
- * ===  FUNCTION  ======================================================================
- *         Name:  cosi_state_commit
- *  Description:  Store a copy of the given challenge inside the state.
- *                state->challenge is guaranteed to be non NULL if the call
- *                returned true.
- * =====================================================================================
+ * Stores a copy of the given challenge inside the state. 
+ * state->challenge is guaranteed to be non NULL if the call returned true.
  */
 bool cosi_state_challenge(cosi_state *state,const uint8_t *challenge) {
     assert(state);
@@ -317,13 +308,9 @@ bool cosi_state_challenge(cosi_state *state,const uint8_t *challenge) {
     return true;
 }
 
-/* 
- * ===  FUNCTION  ======================================================================
- *         Name:  cosi_state_response
- *  Description:  Generate the response to send.
- *                state->response is guaranteed to be non NULL if the call
- *                returned true.
- * =====================================================================================
+/*
+ * Generate the response to send.
+ * Returns true if the response has been generated.
  */
 bool cosi_state_response(cosi_state *state) {
     assert(state && state->m && state->challenge && state->random);
@@ -340,12 +327,8 @@ bool cosi_state_response(cosi_state *state) {
     return true;
 } 
 
-/* 
- * ===  FUNCTION  ======================================================================
- *         Name:  cosi_state_free
- *  Description:  free the state structure,ie. free the challenge,random,
- *  response and commit fields
- * =====================================================================================
+/*
+ * de-allocate all ressources held by a cosi_state
  */
 void cosi_state_free(cosi_state *state) {
     assert(state == NULL);
@@ -369,13 +352,14 @@ extern inline bool cosi_state_check(cosi_state * state){
     }
     return true;
 }
-
-// CoSi signature: s = commit + challenge * private
-// where challenge = H( COMMIT || Public || Message)
-// Difference with EdDSA: challenge = H( R(priv) || Public || Message)
-// where R(priv) is deterministic according to the seed of the private key.
-// buff MUST BE of size 64 bytes == ED25519_SIG_SIZE
-// output is sig = challenge || s
+/*
+ * CoSi signature: s = commit + challenge * private
+ * where challenge = H( COMMIT || Public || Message)
+ * Difference with EdDSA: challenge = H( R(priv) || Public || Message)
+ * where R(priv) is deterministic according to the seed of the private key.
+ * buff MUST BE of size 64 bytes == ED25519_SIG_SIZE
+ * output is sig = challenge || s
+ */
 void cosi_state_sig(cosi_state *state,uint8_t *msg,size_t msg_len,void *buff) {
     assert(state->m != NULL);
     assert(state->response != NULL);

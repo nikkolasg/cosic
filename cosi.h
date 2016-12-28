@@ -52,7 +52,7 @@ struct cosi_proto{
  * / network part (handled by cosi_proto).
  */
 struct cosi_state {
-    const material *m;
+    material *m;
     uint8_t * random;
     uint8_t * commit;
     uint8_t * challenge;
