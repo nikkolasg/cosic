@@ -20,45 +20,117 @@ const uint32_t cosi_phase_chall = 3;
 const uint32_t cosi_phase_resp  = 4;
 
 
-void cosi_proto_init(cosi_proto * proto,const char *remote,const material *material) {
-    if(!proto) {
-        pfail("cosi proto init given null pointer",NULL);
+void cosi_platform_process(net_platform *plat, const net_conn *c,const net_packet *packet);
+bool cosi_platform_accept_id(net_platform *plat, const uint8_t id[UUID_SIZE]);
+
+/*
+ * Returns a new platform
+ */
+net_platform * cosi_platform_new(const material *m) {
+    cosi_platform *cp;
+    net_platform *np;
+    cosi_proto *proto;
+    if ((cp = malloc(sizeof(cosi_platform))) == NULL){
+        pfail("could not allocate a cosi_platform"); 
+    }
+    if ((np = malloc(sizeof(net_platform))) == NULL) {
+        pfail("could not allocate a net_platform for cosi");
     }
 
-    cosi_state *state;
-    if (!util_malloc((void*)&state,sizeof(cosi_state))) {
-        pfail("%s: can not allocate cosi_state",remote);
-    }
-    cosi_state_init(state,remote,material);
-
-    proto->state = state;
-    proto->remote = remote;
-    proto->material = material;
+    proto = cosi_proto_new(m);
+    np->process = cosi_platform_process;
+    np->accept = cosi_platform_accept_id;
+    *cp = (cosi_platform) {np,m,proto};
+    return (net_platform*)cp;  
 }
 
-void cosi_proto_process(cosi_proto *proto,struct bufferevent *bev,uint8_t id[UUID_SIZE],uint8_t *buffer,size_t len) {
-    afail(proto->remote == NULL,"cosi proto null proto remote");
+/*
+ * De-allocate the cosi_platform
+ */
+void cosi_platform_free(cosi_platform *p) {
+    assert(p && p->platform && p->proto);
+    free(p->platform);
+    cosi_proto_free(p->proto);
+    free(p);
+}
 
-    // check if the id is a cosi packet
+/*
+ * check if the id is a cosi packet id or not
+ */
+bool cosi_platform_accept_id(net_platform *plat, const uint8_t id[UUID_SIZE]) {
     if (memcmp(id,cosi_packet_id,UUID_SIZE) != 0) {
-        perr("%s: cosi proto process: non cosi packet id received",proto->remote);
-        return;
+        return false;
     }
+    return true;
+}
 
-    // unmarshal packet
-    ProtocolPacket *packet;
+void cosi_platform_process(net_platform *plat, const net_conn *c,const net_packet *packet) {
+    assert(plat && c && c->si && packet);     
+
+    cosi_platform *p = (cosi_platform*) plat;
+    ProtocolPacket *incoming;
+
+
     //print_hexa(" => ",buffer,len);
-    if ((packet = protocol_packet__unpack(NULL,len,buffer)) == NULL) {
-        perr("%s: cosi proto could not unpack protocol packet out of %zu bytes",proto->remote,len);
+    if ((incoming = protocol_packet__unpack(NULL,packet->len,packet->buffer)) == NULL) {
+        perr("%s: cosi proto could not unpack protocol packet out of %zu bytes",c->si->address,packet->len);
         return;
     }
 
-    switch (packet->phase) {
+    assert(p->proto);
+    cosi_proto_process(p->proto,c,incoming);
+    protocol_packet__free_unpacked(incoming,NULL);
+}
+
+
+
+/*  
+ *  Returns a freshly allocated cosi_state struct
+ */
+cosi_proto* cosi_proto_new(const material *material) {
+    cosi_proto *proto;
+    cosi_state *state;
+    if ((proto = malloc(sizeof(cosi_proto))) == NULL) {
+        pfail("could not allocate a cosi_proto");
+    }
+    state = cosi_state_new(material);
+    proto->state = state;
+    return proto;
+}
+
+/*  
+ *  De-allocate the cosi_state struct (coming from cosi_state_new) 
+ */
+void cosi_proto_free(cosi_proto * p) {
+    assert(p && p->state);
+    cosi_state_free(p->state);
+    free(p);
+}
+
+/*
+ * cosi_proto_process takes the packet and process it further to the inner
+ * cosi_state and reply to the sender accordingly.
+ */
+void cosi_proto_process(cosi_proto *proto,const net_conn * c,const ProtocolPacket *incoming) {
+    assert(proto && c && incoming);
+
+    size_t pack_len;
+    size_t whole_len;
+    size_t written;
+    uint8_t *buffer;
+    bool ret=true;
+
+
+    ProtocolPacket outgoing = PROTOCOL_PACKET__INIT; 
+    outgoing.info = incoming->info;
+    cosi_packet_exchange_endpoints(incoming,&outgoing);
+
+    switch (incoming->phase) {
         case cosi_phase_ann:
-            cosi_proto_announcement(proto,bev,packet);
+            ret = cosi_proto_announcement(proto,incoming,&outgoing);
             break;
         case cosi_phase_chall:
-            cosi_proto_challenge(proto,bev,packet);
+            ret = cosi_proto_challenge(proto,incoming,&outgoing);
             break;
         // theses cases should not happen in this simplistic cosi version yet
         // since we are a leaf node.
@@ -67,119 +139,97 @@ void cosi_proto_process(cosi_proto *proto,struct bufferevent *bev,uint8_t id[UUI
         //case cosi_phase_resp:
         //    cosi_proto_response(proto,bev,packet);
     }
-    protocol_packet__free_unpacked(packet,NULL);
+
+    if (!ret) {
+        return;
+    }
+
+    pack_len = protocol_packet__get_packed_size(&outgoing);
+    whole_len = htonl(pack_len + UUID_SIZE);
+
+    if((buffer = malloc(pack_len)) == NULL) {
+        perr("%s: could not malloc outgoing cosi packet",c->si->address);
+        return;
+    }
+    
+    written = protocol_packet__pack(&outgoing,buffer);
+    net_packet packet;
+    packet.id = (uint8_t *)cosi_packet_id;
+    packet.buffer = buffer;
+    packet.len = pack_len;
+    c->send(c,&packet);
 }
 
-void cosi_proto_announcement(cosi_proto *proto,struct bufferevent *bev,ProtocolPacket *p) {
-    if(p->ann == NULL) {
-        perr("%s: cosi proto announcement given null announcement",proto->remote);                  
-        return;
+/*
+ * cosi_proto_announcement process the announcement message. It returns true if
+ * the outgoing packet is ready to be sent back or false if an error occured.
+ */
+bool cosi_proto_announcement(cosi_proto *proto,const ProtocolPacket *incoming,ProtocolPacket *outgoing) {
+    assert(proto && proto->state);
+    // not an assert since this is external information
+    if(incoming->ann == NULL) {
+        perr("cosi proto announcement given null announcement"); 
+        return false;
     }
-    assert(proto->state != NULL);
-    pout("%s: cosi proto announcement received",proto->remote);
+
+    pout("cosi proto announcement received");
 
     cosi_state *state = proto->state;
+
     // generate commitment
     if (!cosi_state_commit(state)) {
-        return;
+        return false;
     }
-    ProtocolPacket packet = PROTOCOL_PACKET__INIT;
-    packet.info = p->info;
+    
     Commitment protoCommit = COMMITMENT__INIT;
     ProtobufCBinaryData protobufComm = {ED25519_POINT_SIZE,state->commit};
     protoCommit.comm = protobufComm;
-    packet.comm = &protoCommit;
-    packet.phase = (uint32_t) 2;
-
-    if (!cosi_proto_send_packet(bev,&packet)) {
-        perr("%s: cosi proto announcement could not send back commitment",proto->remote);
-    } else {
-        pout("%s: cosi proto sent back commitment",proto->remote);
-    }
+    outgoing->comm = &protoCommit;
+    outgoing->phase = cosi_phase_comm;
+    return true;
 }
 
-void cosi_proto_challenge(cosi_proto *proto, struct bufferevent *bev,ProtocolPacket *packet) {
-    assert(packet->chal != NULL);
+/*
+ * cosi_proto_challenge process the challenge message. It returns true if
+ * the outgoing packet is ready to be sent back or false if an error occured.
+ */
+bool cosi_proto_challenge(cosi_proto *proto, const ProtocolPacket *incoming,ProtocolPacket *outgoing) {
+    assert(incoming->chal != NULL);
     assert(proto->state != NULL);
 
     cosi_state *state = proto->state;
-    uint8_t *challenge = packet->chal->chall.data;
+    uint8_t *challenge = incoming->chal->chall.data;
 
     if(!cosi_state_challenge(state,challenge)) {
-        return;
+        return true;
     }
 
     if(!cosi_state_response(state)) {
-        return;
+        return true;
     }
 
-    ProtocolPacket p = PROTOCOL_PACKET__INIT; 
-    p.info = packet->info;
     Response response = RESPONSE__INIT;
     ProtobufCBinaryData protobufResponse = {ED25519_SCALAR_SIZE,state->response};
     response.resp = protobufResponse;
-    p.resp = &response;
-    p.phase = cosi_phase_resp;
-   
-    if (!cosi_proto_send_packet(bev,&p)) {
-        pout("%s: cosi proto challenge error sending packet",proto->remote);
-    } else {
-        pout("%s: cosi proto challenge sent back response",proto->remote);
-    }
+    outgoing->resp = &response;
+    outgoing->phase = cosi_phase_resp;
+    return true;
 }
 
-// XXX Refactor: put that in net + use GOTO
-bool cosi_proto_send_packet(struct bufferevent *bev,ProtocolPacket *packet) {
-    size_t pack_len = protocol_packet__get_packed_size(packet);
-    size_t whole_len = htonl(pack_len + UUID_SIZE);
-    size_t written;
-    uint8_t *buffer;
-    bool ret=true;
-    cosi_packet_exchange_endpoints(packet);
-
-    if((buffer = malloc(pack_len)) == NULL) {
-        return false;
-    }
-
-    written = protocol_packet__pack(packet,buffer);
-
-    // unmarshal packet
-    ProtocolPacket *unbuffer;
-    //print_hexa(" => ",buffer,len);
-    if (( unbuffer = protocol_packet__unpack(NULL,pack_len,buffer)) == NULL) {
-        perr("cosi_proto_send_packet: could not unpack packet packed");
-        return false;
-    }
-    
-    /*pout("send pack len : %zu",pack_len);*/
-    /*print_hexa("send pack : ",buffer,pack_len);*/
-    // first write the size then id then packet
-    if (bufferevent_write(bev,(void *)(&whole_len),4) == -1) {
-        ret = false;
-    }
-
-    if (bufferevent_write(bev,(void *)&cosi_packet_id,UUID_SIZE) == -1) {
-        ret = false;
-    }
-
-    if (bufferevent_write(bev,(void *)buffer,pack_len) == -1) {
-        ret = false;
-    }
-    pout("sent %zu bytes to evbuff",(unsigned long) ntohl(whole_len));
-
-    free(buffer);
-    return ret;
-}
-
-void cosi_packet_exchange_endpoints(ProtocolPacket *packet) {
-    if (!packet->info || !packet->info->tree_node_info) {
+/*
+ * Set the outgoing's TO/FROM endpoints in the OverlayInformation to the FROM/TO
+ * of the incoming's endpoints.
+ */
+void cosi_packet_exchange_endpoints(const ProtocolPacket *incoming,ProtocolPacket *outgoing) {
+    if (!incoming->info || !incoming->info->tree_node_info) {
         pfail("protocol packet has no overlay message ??");
     }
     
-    TreeNodeInfo *tni = packet->info->tree_node_info;
+    TreeNodeInfo *tni = incoming->info->tree_node_info;
     Token *tmp = tni->to;
     tni->to = tni->from;
     tni->from = tmp;
+    outgoing->info->tree_node_info = tni;
 }
 
 /* 
@@ -192,13 +242,15 @@ void cosi_packet_exchange_endpoints(ProtocolPacket *packet) {
  *  the random bytes.
  * =====================================================================================
  */
-void cosi_state_init(cosi_state *state,const char *remote,const material *m) {
-    assert(state != NULL);
+cosi_state * cosi_state_new(const material *m) {
+    assert(m);
+    cosi_state *s;
+    if ((s = malloc(sizeof(cosi_state))) == NULL) {
+        pfail("could not allocate for cosi_state");
+    }
 
-    state->m = m;
-    state->remote = remote;
-
-    pout("new cosi initiated with %s",remote);
+    s->m = m;
+    return s;
 }
 
 /* 
@@ -210,9 +262,7 @@ void cosi_state_init(cosi_state *state,const char *remote,const material *m) {
  * =====================================================================================
  */
 bool cosi_state_commit(cosi_state *state) {
-    if (!cosi_state_check(state)) {
-        return false;
-    }
+    assert(state);
     
     uint8_t *random;
 
@@ -256,9 +306,8 @@ bool cosi_state_commit(cosi_state *state) {
  * =====================================================================================
  */
 bool cosi_state_challenge(cosi_state *state,const uint8_t *challenge) {
-    if (!cosi_state_check(state)) {
-        return false;
-    }
+    assert(state);
+
     if ((state->challenge = (uint8_t*) malloc(ED25519_SCALAR_SIZE)) == NULL) {
         perr("%s cosi: state challenge can't malloc the bytes",state->remote);
         return false;
@@ -277,9 +326,8 @@ bool cosi_state_challenge(cosi_state *state,const uint8_t *challenge) {
  * =====================================================================================
  */
 bool cosi_state_response(cosi_state *state) {
-    if (!cosi_state_check(state)) {
-        return false;
-    }
+    assert(state && state->m && state->challenge && state->random);
+    
     if ((state->response = (uint8_t*) malloc(ED25519_SCALAR_SIZE)) == NULL) {
         perr("%s cosi: state response can't malloc the bytes",state->remote);
         return false;

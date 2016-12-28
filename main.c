@@ -21,6 +21,7 @@
 #include "utils.h"
 #include "net.h"
 #include "ed25519.h"
+#include "cosi.h"
 
 const char * banner = "cosic - Collective Signing protocol in C";
 
@@ -37,6 +38,26 @@ void usage() {
            "   key.\n");
 }
 
+void read_key_material(const char * filename,material *mat) {
+    if (!read_file(filename, mat->sk, ED25519_PRIVATE_SIZE)) {
+        pfail("could not read properly private key.",NULL);
+    }
+    ed25519_mulbase(mat->pk,mat->sk);
+
+    // XXX it's a PoC so I really WANT to print the private ;)
+    print_hexa("[+] private key: ",mat->sk,ED25519_PRIVATE_SIZE);
+    print_hexa("[+] public key: ",mat->pk,ED25519_PUBLIC_SIZE);
+
+}
+
+/*
+ * init_platforms will create all platforms to give to the network layer.
+ * XXX This PoC only has one platform, namely cosi, but later it might be useful.
+ */
+void init_platforms(net_platform_list *list, const material * mat) {
+    list->platforms = cosi_platform_new(mat); 
+}
+
 int main(int argc, char *argv[]) {
     if (argc != 3) { 
         usage();
@@ -51,23 +72,20 @@ int main(int argc, char *argv[]) {
         pfail("port given \"%d\" not valid.",port);
     } 
 
-    // read private key
-    // XXX move that into ed25519 file
+    // read key material
     uint8_t private[ED25519_PRIVATE_SIZE] = {0};
     uint8_t public[ED25519_PUBLIC_SIZE] = {0};
     char *filename = argv[2];
-    if (!read_file(filename, private, ED25519_PRIVATE_SIZE)) {
-        pfail("could not read properly private key.",NULL);
-    }
-    ed25519_mulbase(public,private);
     material mat;
     mat.sk = (uint8_t*)private;
     mat.pk = (uint8_t*)public;
 
-    // XXX Change to print public key of course
-    print_hexa("[+] private key: ",private,ED25519_PRIVATE_SIZE);
-    print_hexa("[+] public key: ",public,ED25519_PUBLIC_SIZE);
-
+    read_key_material(filename,&mat);
+    
+    // init all platforms == processors
+    net_platform_list l;
+    init_platforms(&l,&mat); 
+    // run the machine !
     run(port,(void *)&mat);
-
 }
+
